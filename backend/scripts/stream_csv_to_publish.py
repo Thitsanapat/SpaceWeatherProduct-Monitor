@@ -24,17 +24,24 @@ def load_csv(station, date_str):
         raise FileNotFoundError(p)
     df = pd.read_csv(p, dtype=str)
     if 'ts' not in df.columns and 'UTC(HH:MM:SS)' in df.columns:
-        df = df.rename(columns={'UTC(HH:MM:SS)':'ts','PRN':'prn','S4c':'S4c','ROTI(TECU/min)':'ROTI','VTEC(TECU)':'VTEC'})
+        df = df.rename(columns={
+            'UTC(HH:MM:SS)':'ts',
+            'PRN':'prn',
+            'S4c':'S4c',
+            'ROTI(TECU/min)':'ROTI',
+            'VTEC(TECU)':'VTEC',
+            'STEC(TECU)':'STEC',
+        })
         df['ts'] = date_str + 'T' + df['ts'] + 'Z'
     df['ts'] = pd.to_datetime(df['ts'], errors='coerce', utc=True)
     df = df.dropna(subset=['ts','prn'])
     # coerce numeric
-    for c in ('S4c','ROTI','VTEC'):
+    for c in ('S4c','ROTI','VTEC','STEC'):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce')
         else:
             df[c] = pd.NA
-    df = df.dropna(subset=['S4c','ROTI','VTEC'])
+    df = df.dropna(subset=['S4c','ROTI','VTEC','STEC'], how='all')
     df = df.sort_values('ts').reset_index(drop=True)
     return df
 
@@ -56,7 +63,8 @@ def stream(df, station, speed=1.0, batch_size=10, url='http://localhost:8000/api
                 'prn': str(r['prn']),
                 'S4c': float(r['S4c']),
                 'ROTI': float(r['ROTI']),
-                'VTEC': float(r['VTEC'])
+                'VTEC': float(r['VTEC']),
+                'STEC': float(r['STEC']) if 'STEC' in r and pd.notna(r['STEC']) else None
             })
 
         # send in batches
