@@ -16,7 +16,12 @@ from stations import DEFAULT_STATION_ID, list_stations, normalize_station_id
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"   # backend/data/<station>/<date>.csv
 
-CSV_HEADER = ["ts", "prn", "S4c", "ROTI", "VTEC", "station"]
+CSV_HEADER = ["ts", "prn", "S4c", "ROTI", "VTEC", "STEC", "station"]
+PUBLISH_MAX_ROWS = 5000
+STEC_MIN = 0.0
+STEC_MAX = 250.0
+VTEC_MIN = 0.0
+VTEC_MAX = 250.0
 
 # ----------------------------
 # app
@@ -30,6 +35,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# in-memory worker config (per station)
+WORKER_CONFIG: Dict[str, Dict] = {}
 
 # ----------------------------
 # websocket manager
@@ -71,6 +79,15 @@ manager = ConnectionManager()
 def utc_today_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+def date_from_ts(ts: str) -> str:
+    try:
+        dt = pd.to_datetime(ts, errors="coerce", utc=True)
+        if pd.isna(dt):
+            return utc_today_str()
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return utc_today_str()
+
 def ensure_daily_csv(station: str, date_yyyy_mm_dd: str) -> Path:
     station_dir = DATA_DIR / station
     station_dir.mkdir(parents=True, exist_ok=True)
@@ -92,6 +109,7 @@ def append_rows_to_csv(csv_path: Path, rows: List[Dict]):
                 r.get("S4c", ""),
                 r.get("ROTI", ""),
                 r.get("VTEC", ""),
+                r.get("STEC", ""),
                 r.get("station", ""),
             ])
 
@@ -101,6 +119,17 @@ def is_allowed_prn(prn: str) -> bool:
     s = prn[0].upper()
     # ✅ ไม่เอา SBAS(S) และไม่เอา OTHER/unknown
     return s in ("G", "E", "C", "R", "J", "I")
+
+def _filter_range(v, vmin: float, vmax: float):
+    try:
+        if v is None:
+            return None
+        x = float(v)
+        if not (vmin <= x <= vmax):
+            return None
+        return x
+    except Exception:
+        return None
 
 def load_station_day_csv(station: str, date_yyyy_mm_dd: str) -> Optional[pd.DataFrame]:
     p = DATA_DIR / station / f"{date_yyyy_mm_dd}.csv"
@@ -122,13 +151,18 @@ def load_station_day_csv(station: str, date_yyyy_mm_dd: str) -> Optional[pd.Data
     df["prn"] = df["prn"].astype(str)
     df = df[df["prn"].map(is_allowed_prn)]
 
-    for col in ("S4c", "ROTI", "VTEC"):
+    for col in ("S4c", "ROTI", "VTEC", "STEC"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         else:
             df[col] = pd.NA
 
-    df = df.dropna(subset=["S4c", "ROTI", "VTEC"])
+    if "STEC" in df.columns:
+        df.loc[(df["STEC"] < STEC_MIN) | (df["STEC"] > STEC_MAX), "STEC"] = pd.NA
+    if "VTEC" in df.columns:
+        df.loc[(df["VTEC"] < VTEC_MIN) | (df["VTEC"] > VTEC_MAX), "VTEC"] = pd.NA
+
+    df = df.dropna(subset=["S4c", "ROTI", "VTEC", "STEC"], how="all")
     if df.empty:
         return None
 
@@ -156,8 +190,29 @@ def get_history(station: str, date: str, limit: int = 200000):
     if len(df) > limit:
         df = df.iloc[-limit:].copy()
 
-    rows = df[["ts", "prn", "S4c", "ROTI", "VTEC"]].to_dict(orient="records")
+    rows = df[["ts", "prn", "S4c", "ROTI", "VTEC", "STEC"]].to_dict(orient="records")
     return {"ok": True, "rows": rows}
+
+
+@app.get("/api/worker_config")
+def get_worker_config(station: str):
+    station = normalize_station_id(station) or DEFAULT_STATION_ID
+    cfg = WORKER_CONFIG.get(station, {})
+    return {"ok": True, "station": station, "config": cfg}
+
+
+@app.post("/api/worker_config")
+def set_worker_config(payload: Dict = Body(...)):
+    station = normalize_station_id(payload.get("station")) or DEFAULT_STATION_ID
+    cfg = WORKER_CONFIG.setdefault(station, {})
+    if "elev_cut" in payload:
+        try:
+            v = float(payload.get("elev_cut"))
+            v = max(0.0, min(90.0, v))
+            cfg["elev_cut"] = v
+        except Exception:
+            pass
+    return {"ok": True, "station": station, "config": cfg}
 
 # ----------------------------
 # WebSocket realtime
@@ -216,28 +271,41 @@ async def publish(payload: Dict = Body(...)):
     if not station or not isinstance(data, list):
         return {"ok": False, "reason": "invalid payload"}
 
-    # ✅ filter SBAS/OTHER/unknown here too
-    filtered = []
+    if len(data) > PUBLISH_MAX_ROWS:
+        data = data[-PUBLISH_MAX_ROWS:]
+
+    # ✅ filter SBAS/OTHER/unknown here too + de-dup (ts, prn)
+    dedup: Dict[tuple, Dict] = {}
     for row in data:
         prn = str(row.get("prn", "")).strip()
         if not is_allowed_prn(prn):
             continue
-        filtered.append({
+        key = (row.get("ts"), prn)
+        stec = _filter_range(row.get("STEC"), STEC_MIN, STEC_MAX)
+        vtec = _filter_range(row.get("VTEC"), VTEC_MIN, VTEC_MAX)
+        dedup[key] = {
             "ts": row.get("ts"),
             "prn": prn,
             "S4c": row.get("S4c"),
             "ROTI": row.get("ROTI"),
-            "VTEC": row.get("VTEC"),
+            "VTEC": vtec,
+            "STEC": stec,
             "station": station,
-        })
+        }
+
+    filtered = list(dedup.values())
 
     if not filtered:
         return {"ok": True, "written": 0, "broadcast": 0}
 
-    # write today csv
-    today = utc_today_str()
-    csv_path = ensure_daily_csv(station, today)
-    append_rows_to_csv(csv_path, filtered)
+    # write daily csv by row date
+    by_date: Dict[str, List[Dict]] = {}
+    for r in filtered:
+        d = date_from_ts(r.get("ts", ""))
+        by_date.setdefault(d, []).append(r)
+    for d, rows in by_date.items():
+        csv_path = ensure_daily_csv(station, d)
+        append_rows_to_csv(csv_path, rows)
 
     # broadcast to ws listeners
     msg = json.dumps({"station": station, "data": filtered})
