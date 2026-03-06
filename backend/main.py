@@ -4,6 +4,7 @@
 import asyncio
 import csv
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -22,6 +23,21 @@ STEC_MIN = 0.0
 STEC_MAX = 250.0
 VTEC_MIN = 0.0
 VTEC_MAX = 250.0
+WS_HEARTBEAT_SEC = 5.0
+WS_CLIENT_IDLE_SEC = 20.0
+
+RUNTIME_METRICS = {
+    "publish": {
+        "last_station": None,
+        "last_rows": 0,
+        "last_write_ms": 0.0,
+        "last_broadcast_ms": 0.0,
+        "last_total_ms": 0.0,
+        "last_at": None,
+        "count": 0,
+    }
+}
+CLIENT_METRICS: Dict[str, Dict] = {}
 
 # ----------------------------
 # app
@@ -70,6 +86,14 @@ class ConnectionManager:
             async with self._lock:
                 for ws in dead:
                     self._conns.get(station, set()).discard(ws)
+
+    async def count_station(self, station: str) -> int:
+        async with self._lock:
+            return len(self._conns.get(station, set()))
+
+    async def count_total(self) -> int:
+        async with self._lock:
+            return sum(len(v) for v in self._conns.values())
 
 manager = ConnectionManager()
 
@@ -241,19 +265,77 @@ async def ws_realtime(ws: WebSocket):
 
         station = normalize_station_id(station) or DEFAULT_STATION_ID
         await manager.register(station, ws)
+        station_conn = await manager.count_station(station)
+        total_conn = await manager.count_total()
+        print(f"[WS] connected station={station} station_conn={station_conn} total_conn={total_conn}")
         # acknowledge registration so client knows it's ready
         await ws.send_text(json.dumps({"ok": True, "station": station, "msg": "registered"}))
 
-        # keep alive loop (data มาจาก /api/publish)
+        # keep alive + heartbeat + client liveness check
+        last_client_msg = time.monotonic()
         while True:
-            await asyncio.sleep(10)
+            try:
+                text = await asyncio.wait_for(ws.receive_text(), timeout=WS_HEARTBEAT_SEC)
+                last_client_msg = time.monotonic()
+                try:
+                    incoming = json.loads(text)
+                    if isinstance(incoming, dict) and incoming.get("type") == "ping":
+                        await ws.send_text(json.dumps({"type": "pong", "ts": datetime.now(timezone.utc).isoformat()}))
+                except Exception:
+                    pass
+            except asyncio.TimeoutError:
+                await ws.send_text(json.dumps({"type": "heartbeat", "ts": datetime.now(timezone.utc).isoformat()}))
+                if (time.monotonic() - last_client_msg) > WS_CLIENT_IDLE_SEC:
+                    print(f"[WS] idle timeout station={station}")
+                    await ws.close()
+                    break
 
     except WebSocketDisconnect:
         await manager.unregister(station, ws)
+        station_conn = await manager.count_station(station)
+        total_conn = await manager.count_total()
+        print(f"[WS] disconnected station={station} station_conn={station_conn} total_conn={total_conn}")
         return
     except Exception:
         await manager.unregister(station, ws)
+        station_conn = await manager.count_station(station)
+        total_conn = await manager.count_total()
+        print(f"[WS] error-disconnect station={station} station_conn={station_conn} total_conn={total_conn}")
         return
+
+
+@app.get("/api/runtime_metrics")
+async def get_runtime_metrics(station: Optional[str] = None):
+    station_norm = normalize_station_id(station) if station else None
+    station_conn = await manager.count_station(station_norm) if station_norm else None
+    total_conn = await manager.count_total()
+    return {
+        "ok": True,
+        "ws": {
+            "total_connections": total_conn,
+            "station": station_norm,
+            "station_connections": station_conn,
+        },
+        "publish": RUNTIME_METRICS.get("publish", {}),
+        "client": CLIENT_METRICS.get(station_norm, {}) if station_norm else CLIENT_METRICS,
+    }
+
+
+@app.post("/api/client_metrics")
+def set_client_metrics(payload: Dict = Body(...)):
+    station = normalize_station_id(payload.get("station")) or DEFAULT_STATION_ID
+    CLIENT_METRICS[station] = {
+        "station": station,
+        "render_ms": payload.get("render_ms"),
+        "heap_mb": payload.get("heap_mb"),
+        "ws_reconnects": payload.get("ws_reconnects"),
+        "pending_samples": payload.get("pending_samples"),
+        "pending_counts": payload.get("pending_counts"),
+        "fps": payload.get("fps"),
+        "ws_status": payload.get("ws_status"),
+        "client_last_seen": datetime.now(timezone.utc).isoformat(),
+    }
+    return {"ok": True, "station": station}
 
 # ----------------------------
 # Publish endpoint: worker -> backend
@@ -298,17 +380,46 @@ async def publish(payload: Dict = Body(...)):
     if not filtered:
         return {"ok": True, "written": 0, "broadcast": 0}
 
-    # write daily csv by row date
+    t0 = time.perf_counter()
+
+    # write daily csv by row date (offload file I/O to thread pool)
     by_date: Dict[str, List[Dict]] = {}
     for r in filtered:
         d = date_from_ts(r.get("ts", ""))
         by_date.setdefault(d, []).append(r)
+    write_tasks = []
     for d, rows in by_date.items():
         csv_path = ensure_daily_csv(station, d)
-        append_rows_to_csv(csv_path, rows)
+        write_tasks.append(asyncio.to_thread(append_rows_to_csv, csv_path, rows))
+    if write_tasks:
+        await asyncio.gather(*write_tasks)
+
+    t_after_write = time.perf_counter()
 
     # broadcast to ws listeners
     msg = json.dumps({"station": station, "data": filtered})
     await manager.broadcast(station, msg)
+    t_after_broadcast = time.perf_counter()
 
-    return {"ok": True, "written": len(filtered), "broadcast": len(filtered)}
+    write_ms = (t_after_write - t0) * 1000.0
+    broadcast_ms = (t_after_broadcast - t_after_write) * 1000.0
+    total_ms = (t_after_broadcast - t0) * 1000.0
+    publish_metrics = RUNTIME_METRICS["publish"]
+    publish_metrics["last_station"] = station
+    publish_metrics["last_rows"] = len(filtered)
+    publish_metrics["last_write_ms"] = round(write_ms, 3)
+    publish_metrics["last_broadcast_ms"] = round(broadcast_ms, 3)
+    publish_metrics["last_total_ms"] = round(total_ms, 3)
+    publish_metrics["last_at"] = datetime.now(timezone.utc).isoformat()
+    publish_metrics["count"] = int(publish_metrics.get("count", 0)) + 1
+
+    return {
+        "ok": True,
+        "written": len(filtered),
+        "broadcast": len(filtered),
+        "latency_ms": {
+            "write": round(write_ms, 3),
+            "broadcast": round(broadcast_ms, 3),
+            "total": round(total_ms, 3),
+        },
+    }
