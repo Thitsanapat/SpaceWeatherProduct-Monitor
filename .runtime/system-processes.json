@@ -1,0 +1,29 @@
+﻿{
+    "started_at_utc":  "2026-03-06T23:31:46.5632117Z",
+    "station":  "KMIT6",
+    "backend_port":  8000,
+    "frontend_port":  3000,
+    "monitor_out":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend\\monitor_logs\\soak_metrics_KMIT6_20260307_063143.csv",
+    "processes":  {
+                      "backend":  {
+                                      "pid":  15540,
+                                      "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
+                                      "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000"
+                                  },
+                      "frontend":  {
+                                       "pid":  6064,
+                                       "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\frontend",
+                                       "command":  "C:\\Program Files\\nodejs\\npm.cmd run dev -- --port 3000"
+                                   },
+                      "worker":  {
+                                     "pid":  12528,
+                                     "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
+                                     "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py KMIT6"
+                                 },
+                      "monitor":  {
+                                      "pid":  6436,
+                                      "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
+                                      "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe scripts/soak_test_runtime_metrics.py --backend http://localhost:8000 --station KMIT6 --interval-sec 2 --duration-hr 24 --out C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend\\monitor_logs\\soak_metrics_KMIT6_20260307_063143.csv"
+                                  }
+                  }
+}
