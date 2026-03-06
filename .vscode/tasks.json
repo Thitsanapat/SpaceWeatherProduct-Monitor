@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Full System (Backend + Frontend + Monitor)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\run_all.ps1"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Stop Full System",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\stop_all.ps1"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
