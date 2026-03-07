@@ -38,6 +38,7 @@ RUNTIME_METRICS = {
     }
 }
 CLIENT_METRICS: Dict[str, Dict] = {}
+STATION_LATEST: Dict[str, Dict] = {}
 
 # ----------------------------
 # app
@@ -152,6 +153,15 @@ def _filter_range(v, vmin: float, vmax: float):
         if not (vmin <= x <= vmax):
             return None
         return x
+    except Exception:
+        return None
+
+def _float_or_none(v):
+    try:
+        if v is None or v == "":
+            return None
+        x = float(v)
+        return x if pd.notna(x) else None
     except Exception:
         return None
 
@@ -337,6 +347,45 @@ def set_client_metrics(payload: Dict = Body(...)):
     }
     return {"ok": True, "station": station}
 
+
+@app.get("/api/station_alerts")
+def get_station_alerts(vtec_thr: float = 80.0, roti_thr: float = 0.4, s4c_thr: float = 0.25):
+    rows: List[Dict] = []
+    for st, m in STATION_LATEST.items():
+        max_vtec = _float_or_none(m.get("max_vtec"))
+        max_roti = _float_or_none(m.get("max_roti"))
+        max_s4c = _float_or_none(m.get("max_s4c"))
+        exceed_vtec = bool(max_vtec is not None and max_vtec >= vtec_thr)
+        exceed_roti = bool(max_roti is not None and max_roti >= roti_thr)
+        exceed_s4c = bool(max_s4c is not None and max_s4c >= s4c_thr)
+        rows.append({
+            "station": st,
+            "last_at": m.get("last_at"),
+            "rows": int(m.get("rows", 0)),
+            "max_vtec": max_vtec,
+            "max_roti": max_roti,
+            "max_s4c": max_s4c,
+            "exceed": {
+                "vtec": exceed_vtec,
+                "roti": exceed_roti,
+                "s4c": exceed_s4c,
+                "any": bool(exceed_vtec or exceed_roti or exceed_s4c),
+            },
+        })
+
+    rows.sort(key=lambda r: (not r["exceed"]["any"], r["station"]))
+    exceeded = [r for r in rows if r["exceed"]["any"]]
+    return {
+        "ok": True,
+        "thresholds": {
+            "vtec": vtec_thr,
+            "roti": roti_thr,
+            "s4c": s4c_thr,
+        },
+        "rows": rows,
+        "exceeded": exceeded,
+    }
+
 # ----------------------------
 # Publish endpoint: worker -> backend
 # ----------------------------
@@ -379,6 +428,17 @@ async def publish(payload: Dict = Body(...)):
 
     if not filtered:
         return {"ok": True, "written": 0, "broadcast": 0}
+
+    vtecs = [v for v in (_float_or_none(r.get("VTEC")) for r in filtered) if v is not None]
+    rotis = [v for v in (_float_or_none(r.get("ROTI")) for r in filtered) if v is not None]
+    s4cs = [v for v in (_float_or_none(r.get("S4c")) for r in filtered) if v is not None]
+    STATION_LATEST[station] = {
+        "last_at": datetime.now(timezone.utc).isoformat(),
+        "rows": len(filtered),
+        "max_vtec": max(vtecs) if vtecs else None,
+        "max_roti": max(rotis) if rotis else None,
+        "max_s4c": max(s4cs) if s4cs else None,
+    }
 
     t0 = time.perf_counter()
 
