@@ -71,8 +71,9 @@ except Exception:  # pragma: no cover
 
 
 # -------------------- config --------------------
-BACKEND_PUBLISH = "http://localhost:8000/api/publish"
-WORKER_CONFIG_URL = "http://localhost:8000/api/worker_config"
+BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000").rstrip("/")
+BACKEND_PUBLISH = f"{BACKEND_BASE_URL}/api/publish"
+WORKER_CONFIG_URL = f"{BACKEND_BASE_URL}/api/worker_config"
 PUBLISH_INTERVAL_SEC = 1.0
 PUBLISH_MAX_BATCH = 500
 PUBLISH_Q_MAX = 20000
