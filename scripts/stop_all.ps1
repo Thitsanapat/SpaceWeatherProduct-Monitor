@@ -22,6 +22,15 @@ $targets = @(
     @{ name = "monitor"; pid = $state.processes.monitor.pid }
 )
 
+if ($state.processes.PSObject.Properties.Name -contains "workers") {
+    foreach ($w in $state.processes.workers) {
+        if (-not $w) { continue }
+        $label = "worker"
+        if ($w.station) { $label = "worker-" + [string]$w.station }
+        $targets += @{ name = $label; pid = $w.pid }
+    }
+}
+
 foreach ($t in $targets) {
     if (-not $t.pid) { continue }
     try {
