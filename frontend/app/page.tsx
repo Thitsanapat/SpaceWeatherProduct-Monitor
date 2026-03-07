@@ -85,7 +85,21 @@ type RuntimeStats = {
   lastHeartbeatAgoSec: number | null;
 };
 
-const BACKEND = "http://localhost:8000";
+type StationAlertRow = {
+  station: string;
+  last_at: string | null;
+  rows: number;
+  max_vtec: number | null;
+  max_roti: number | null;
+  max_s4c: number | null;
+  exceed: { vtec: boolean; roti: boolean; s4c: boolean; any: boolean };
+};
+
+const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000")
+  .trim()
+  .replace(/\s+/g, "")
+  .replace(/\/+$/, "");
+const BACKEND_WS = BACKEND.replace(/^https?/i, (m) => (m.toLowerCase() === "https" ? "wss" : "ws"));
 const REALTIME_WINDOW_MS = 2 * 60 * 60 * 1000;
 const MAX_POINTS_PER_PRN = 6000;
 const MAX_COUNT_POINTS = 6000;
@@ -326,6 +340,61 @@ function RealtimeHealth({ stats }: { stats: RuntimeStats }) {
   );
 }
 
+function StationThresholdBoard({ rows }: { rows: StationAlertRow[] }) {
+  const exceeded = rows.filter((r) => r.exceed.any);
+  return (
+    <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="text-lg font-semibold">Stations Exceeding Threshold</div>
+        <span className="text-xs rounded-full px-2 py-1 bg-slate-100 text-slate-600">
+          {exceeded.length} exceeded
+        </span>
+      </div>
+
+      {!rows.length ? (
+        <div className="text-sm text-slate-500">No realtime station alerts yet.</div>
+      ) : (
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-200">
+                <th className="py-2 pr-4">Station</th>
+                <th className="py-2 pr-4">VTEC max</th>
+                <th className="py-2 pr-4">ROTI max</th>
+                <th className="py-2 pr-4">S4c max</th>
+                <th className="py-2 pr-4">Last update</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 30).map((r) => (
+                <tr key={r.station} className="border-b border-slate-100">
+                  <td className="py-2 pr-4 font-medium text-slate-900">{r.station}</td>
+                  <td className="py-2 pr-4">
+                    <span className={r.exceed.vtec ? "text-rose-600 font-semibold" : "text-slate-700"}>
+                      {r.max_vtec === null ? "-" : r.max_vtec.toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className={r.exceed.roti ? "text-rose-600 font-semibold" : "text-slate-700"}>
+                      {r.max_roti === null ? "-" : r.max_roti.toFixed(3)}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className={r.exceed.s4c ? "text-rose-600 font-semibold" : "text-slate-700"}>
+                      {r.max_s4c === null ? "-" : r.max_s4c.toFixed(3)}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4 text-slate-500">{r.last_at ? toHHMMSS(r.last_at) : "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Phase2Map() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<MapView>({ x: 0, y: 0, scale: 1 });
@@ -504,6 +573,7 @@ export default function Page() {
     heapMb: null,
     lastHeartbeatAgoSec: null,
   });
+  const [stationAlerts, setStationAlerts] = useState<StationAlertRow[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -624,7 +694,7 @@ export default function Page() {
     };
 
     const connect = () => {
-      const ws = new WebSocket(`ws://localhost:8000/ws/realtime?station=${encodeURIComponent(station)}`);
+      const ws = new WebSocket(`${BACKEND_WS}/ws/realtime?station=${encodeURIComponent(station)}`);
       wsRef.current = ws;
       wsStatusRef.current = "connecting";
 
@@ -708,6 +778,26 @@ export default function Page() {
       wsRef.current = null;
     };
   }, [isRealtime, station]);
+
+  useEffect(() => {
+    if (!isRealtime) return;
+    let alive = true;
+    const poll = () => {
+      fetch(`${BACKEND}/api/station_alerts?vtec_thr=80&roti_thr=0.4&s4c_thr=0.25`)
+        .then((r) => r.json())
+        .then((j) => {
+          if (!alive) return;
+          setStationAlerts(Array.isArray(j?.rows) ? j.rows : []);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [isRealtime]);
 
   useEffect(() => {
     if (!isRealtime) return;
@@ -896,6 +986,7 @@ export default function Page() {
         </section>
 
         {isRealtime ? <RealtimeHealth stats={runtimeStats} /> : null}
+        {isRealtime ? <StationThresholdBoard rows={stationAlerts} /> : null}
 
         <div className="space-y-4">
           <Card title="GNSS TEC / VTEC (per-PRN + median)" subtitle="thin lines = per-PRN, thick line = median">
@@ -908,7 +999,7 @@ export default function Page() {
                   <Tooltip content={<CompactTooltip title="VTEC" />} />
                   <Legend />
                   {prns.map((prn, idx) => (
-                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1} isAnimationActive={false} connectNulls={false} />
+                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1} isAnimationActive={false} connectNulls />
                   ))}
                   <Line type="monotone" dataKey="median" name="median VTEC" dot={false} stroke={C_BLUE} strokeWidth={3} isAnimationActive={false} />
                 </LineChart>
@@ -926,7 +1017,7 @@ export default function Page() {
                   <Tooltip content={<CompactTooltip title="STEC" />} />
                   <Legend />
                   {prns.map((prn, idx) => (
-                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1} isAnimationActive={false} connectNulls={false} />
+                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1} isAnimationActive={false} connectNulls />
                   ))}
                   <Line type="monotone" dataKey="median" name="median STEC" dot={false} stroke={C_BLUE} strokeWidth={3} isAnimationActive={false} />
                 </LineChart>
@@ -944,7 +1035,7 @@ export default function Page() {
                   <Tooltip content={<CompactTooltip title="ROTI" />} />
                   <Legend />
                   {prns.map((prn, idx) => (
-                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1.5} opacity={0.8} isAnimationActive={false} connectNulls={false} />
+                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1.5} opacity={0.8} isAnimationActive={false} connectNulls />
                   ))}
                   <Line type="monotone" dataKey="median" name="median ROTI" dot={false} stroke={C_ORANGE} strokeWidth={3} isAnimationActive={false} />
                 </LineChart>
@@ -962,7 +1053,7 @@ export default function Page() {
                   <Tooltip content={<CompactTooltip title="S4c" />} />
                   <Legend />
                   {prns.map((prn, idx) => (
-                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1.5} opacity={0.9} isAnimationActive={false} connectNulls={false} />
+                    <Line key={prn} type="monotone" dataKey={prn} name={prn} dot={false} stroke={idx % 3 === 0 ? "#0ea5e9" : "#fb7185"} strokeWidth={1.5} opacity={0.9} isAnimationActive={false} connectNulls />
                   ))}
                   <Line type="monotone" dataKey="median" name="median S4c" dot={false} stroke={C_BLUE} strokeWidth={3} isAnimationActive={false} />
                 </LineChart>
