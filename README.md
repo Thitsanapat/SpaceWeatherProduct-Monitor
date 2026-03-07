@@ -19,3 +19,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\stop_all.ps1
 ```
 
+If port `8000` is occupied, choose another backend port:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1 -BackendPort 8100
+```
+
+Run workers for all configured stations at once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1 -RunAllStations
+```
+
