@@ -4,7 +4,8 @@ param(
     [double]$MonitorIntervalSec = 2,
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 3000,
-    [bool]$RunWorker = $true
+    [bool]$RunWorker = $true,
+    [switch]$RunAllStations
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,12 +89,13 @@ $monitorArgs = @(
 )
 
 $backendCmd = "$pythonExe $($backendArgs -join ' ')"
-$frontendCmd = "$npmExe $($frontendArgs -join ' ')"
+$frontendCmd = "NEXT_PUBLIC_BACKEND_URL=http://localhost:$BackendPort ; $npmExe $($frontendArgs -join ' ')"
 $workerCmd = "$pythonExe $($workerArgs -join ' ')"
 $monitorCmd = "$pythonExe $($monitorArgs -join ' ')"
 
 $backendProc = Start-Process -FilePath $pythonExe -WorkingDirectory $backendDir -ArgumentList $backendArgs -PassThru
-$frontendProc = Start-Process -FilePath $npmExe -WorkingDirectory $frontendDir -ArgumentList $frontendArgs -PassThru
+$frontendCmdLine = "set NEXT_PUBLIC_BACKEND_URL=http://localhost:$BackendPort && `"$npmExe`" run dev -- --port $FrontendPort"
+$frontendProc = Start-Process -FilePath "cmd.exe" -WorkingDirectory $frontendDir -ArgumentList @("/c", $frontendCmdLine) -PassThru
 
 $backendReady = $false
 for ($i = 0; $i -lt 30; $i++) {
@@ -108,9 +110,41 @@ if (-not $backendReady) {
     Write-Warning "Backend health endpoint did not respond within 30 seconds. Continuing startup; check backend window logs if graph has no data."
 }
 
-$workerProc = $null
+$workerProcs = @()
 if ($RunWorker) {
-    $workerProc = Start-Process -FilePath $pythonExe -WorkingDirectory $backendDir -ArgumentList $workerArgs -PassThru
+    $prevBackendBase = $env:BACKEND_BASE_URL
+    $env:BACKEND_BASE_URL = "http://localhost:$BackendPort"
+    $workerStations = @($Station)
+    if ($RunAllStations) {
+        try {
+            Push-Location $backendDir
+            $stationCsv = (& $pythonExe -c "from stations import list_station_ids; print(','.join(list_station_ids()))" 2>$null).Trim()
+            Pop-Location
+            if ($stationCsv) {
+                $workerStations = $stationCsv.Split(',') | ForEach-Object { $_.Trim().ToUpper() } | Where-Object { $_ } | Select-Object -Unique
+            }
+        } catch {
+            try { Pop-Location } catch { }
+            Write-Warning "Failed to load station list from backend/stations.py. Falling back to station $Station only."
+            $workerStations = @($Station)
+        }
+    }
+
+    foreach ($sid in $workerStations) {
+        $args = @("worker_ntrip_publish.py", "$sid")
+        $proc = Start-Process -FilePath $pythonExe -WorkingDirectory $backendDir -ArgumentList $args -PassThru
+        $workerProcs += [pscustomobject]@{
+            station = $sid
+            pid = $proc.Id
+            cwd = $backendDir
+            command = "$pythonExe worker_ntrip_publish.py $sid"
+        }
+    }
+    if ($null -eq $prevBackendBase) {
+        Remove-Item Env:BACKEND_BASE_URL -ErrorAction SilentlyContinue
+    } else {
+        $env:BACKEND_BASE_URL = $prevBackendBase
+    }
 }
 
 $monitorProc = Start-Process -FilePath $pythonExe -WorkingDirectory $backendDir -ArgumentList $monitorArgs -PassThru
@@ -132,7 +166,8 @@ $payload = [ordered]@{
     processes = [ordered]@{
         backend = [ordered]@{ pid = $backendProc.Id; cwd = $backendDir; command = $backendCmd }
         frontend = [ordered]@{ pid = $frontendProc.Id; cwd = $frontendDir; command = $frontendCmd }
-        worker = [ordered]@{ pid = if ($workerProc) { $workerProc.Id } else { $null }; cwd = $backendDir; command = if ($RunWorker) { $workerCmd } else { "disabled" } }
+        worker = [ordered]@{ pid = if ($workerProcs.Count -gt 0) { $workerProcs[0].pid } else { $null }; cwd = $backendDir; command = if ($RunWorker) { $workerCmd } else { "disabled" } }
+        workers = $workerProcs
         monitor = [ordered]@{ pid = $monitorProc.Id; cwd = $backendDir; command = $monitorCmd }
     }
 }
@@ -143,7 +178,11 @@ Write-Host "Started full system." -ForegroundColor Green
 Write-Host "Backend:  http://localhost:$BackendPort" -ForegroundColor Cyan
 Write-Host "Frontend: http://localhost:$FrontendPort" -ForegroundColor Cyan
 if ($RunWorker) {
-    Write-Host "Worker:   enabled for station $Station" -ForegroundColor Cyan
+    if ($RunAllStations) {
+        Write-Host "Worker:   enabled for all stations ($($workerProcs.Count) workers)" -ForegroundColor Cyan
+    } else {
+        Write-Host "Worker:   enabled for station $Station" -ForegroundColor Cyan
+    }
 } else {
     Write-Host "Worker:   disabled (RunWorker=false)" -ForegroundColor Yellow
 }
