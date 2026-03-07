@@ -11,6 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import Phase2Cesium from "./components/Phase2Cesium";
 
 type Station = { id: string; name: string; lat?: number; lon?: number; alt?: number };
 
@@ -26,6 +27,7 @@ type Sample = {
 type CountPoint = {
   ts: string;
   time: string;
+  tod: number;
   GNSS: number;
   GPS?: number;
   GAL?: number;
@@ -41,27 +43,10 @@ type MetricKey = "VTEC" | "STEC" | "ROTI" | "S4c";
 type MetricRow = {
   ts: string;
   time: string;
+  tod: number;
   median: number | null;
   [key: string]: number | string | null;
 };
-
-type IppPoint = {
-  id: string;
-  lat: number;
-  lon: number;
-  vtec: number;
-  sys: "GPS" | "GAL" | "BDS" | "GLO" | "QZS";
-};
-
-type AlertItem = {
-  id: string;
-  title: string;
-  severity: "low" | "medium" | "high";
-  area: string;
-  time: string;
-};
-
-type MapView = { x: number; y: number; scale: number };
 
 type RealtimePayload = {
   type?: string;
@@ -100,13 +85,30 @@ const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000")
   .replace(/\s+/g, "")
   .replace(/\/+$/, "");
 const BACKEND_WS = BACKEND.replace(/^https?/i, (m) => (m.toLowerCase() === "https" ? "wss" : "ws"));
-const REALTIME_WINDOW_MS = 2 * 60 * 60 * 1000;
+const REALTIME_WINDOW_MS = 1 * 60 * 60 * 1000;
 const MAX_POINTS_PER_PRN = 6000;
 const MAX_COUNT_POINTS = 6000;
 const WS_FLUSH_INTERVAL_MS = 250;
 const WS_RECONNECT_MS = 1500;
 const WS_HEARTBEAT_TIMEOUT_MS = 15000;
 const CLIENT_METRIC_PUSH_MS = 5000;
+const DAY_START_SEC = 0;
+const DAY_END_SEC = 24 * 3600;
+const X_TICKS_SEC = [
+  0,
+  2 * 3600,
+  4 * 3600,
+  6 * 3600,
+  8 * 3600,
+  10 * 3600,
+  12 * 3600,
+  14 * 3600,
+  16 * 3600,
+  18 * 3600,
+  20 * 3600,
+  22 * 3600,
+  DAY_END_SEC,
+];
 
 const C_BLUE = "#2563eb";
 const C_ORANGE = "#f97316";
@@ -120,15 +122,27 @@ function toHHMMSS(iso: string) {
   }
 }
 
-function clamp(v: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, v));
+function utcSecondsOfDay(iso: string) {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return NaN;
+  return d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds();
 }
 
-function projectLatLon(lat: number, lon: number) {
-  return {
-    x: ((lon + 180) / 360) * 100,
-    y: ((90 - lat) / 180) * 100,
-  };
+function formatUtcTick(sec: number) {
+  const x = Math.max(0, Math.min(DAY_END_SEC, Math.floor(sec)));
+  if (x === DAY_END_SEC) return "00:00";
+  const hh = String(Math.floor(x / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((x % 3600) / 60)).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function formatUtcLabel(sec: number) {
+  const x = Math.max(0, Math.min(DAY_END_SEC, Math.floor(sec)));
+  if (x === DAY_END_SEC) return "00:00:00";
+  const hh = String(Math.floor(x / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((x % 3600) / 60)).padStart(2, "0");
+  const ss = String(x % 60).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 function toNum(v: unknown): number | null {
@@ -216,7 +230,8 @@ function buildMetricSeries(metric: MetricKey, prns: string[], series: Record<str
 
   const tsList = Array.from(tsSet).sort();
   return tsList.map((ts) => {
-    const row: MetricRow = { ts, time: toHHMMSS(ts), median: null };
+    const tod = utcSecondsOfDay(ts);
+    const row: MetricRow = { ts, time: toHHMMSS(ts), tod: Number.isFinite(tod) ? tod : 0, median: null };
     const vals: number[] = [];
     for (const prn of prns) {
       const v = perPrn[prn]?.[ts] ?? null;
@@ -242,7 +257,7 @@ function CompactTooltip({
 }: {
   active?: boolean;
   payload?: Array<{ dataKey?: unknown; value?: unknown; color?: string }>;
-  label?: string;
+  label?: unknown;
   title: string;
 }) {
   if (!active || !payload || !payload.length) return null;
@@ -260,7 +275,7 @@ function CompactTooltip({
   return (
     <div className="rounded-lg border border-slate-200 bg-white/95 shadow-lg p-2 text-xs max-w-[240px]">
       <div className="font-semibold">{title}</div>
-      <div className="text-slate-500">{label}</div>
+      <div className="text-slate-500">{typeof label === "number" ? formatUtcLabel(label) : String(label ?? "")}</div>
       {medianItem ? (
         <div className="mt-1">
           <span className="text-slate-500">median:</span> {fmtVal(medianItem.value)}
@@ -366,7 +381,7 @@ function StationThresholdBoard({ rows }: { rows: StationAlertRow[] }) {
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 30).map((r) => (
+              {rows.map((r) => (
                 <tr key={r.station} className="border-b border-slate-100">
                   <td className="py-2 pr-4 font-medium text-slate-900">{r.station}</td>
                   <td className="py-2 pr-4">
@@ -391,147 +406,6 @@ function StationThresholdBoard({ rows }: { rows: StationAlertRow[] }) {
           </table>
         </div>
       )}
-    </section>
-  );
-}
-
-function Phase2Map() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [view, setView] = useState<MapView>({ x: 0, y: 0, scale: 1 });
-  const dragRef = useRef<{ active: boolean; startX: number; startY: number; ox: number; oy: number }>({
-    active: false,
-    startX: 0,
-    startY: 0,
-    ox: 0,
-    oy: 0,
-  });
-
-  const ippPoints: IppPoint[] = [
-    { id: "G05", lat: 13.75, lon: 100.5, vtec: 48, sys: "GPS" },
-    { id: "G19", lat: 18.79, lon: 98.99, vtec: 62, sys: "GPS" },
-    { id: "E11", lat: 14.1, lon: 101.4, vtec: 44, sys: "GAL" },
-    { id: "C07", lat: 12.6, lon: 100.9, vtec: 55, sys: "BDS" },
-    { id: "R03", lat: 16.5, lon: 99.7, vtec: 58, sys: "GLO" },
-    { id: "J02", lat: 11.8, lon: 102.1, vtec: 39, sys: "QZS" },
-  ];
-
-  const alerts: AlertItem[] = [
-    { id: "A-120", title: "Equatorial plasma bubble", severity: "high", area: "SE Asia", time: "09:36 UTC" },
-    { id: "A-121", title: "ROTI burst", severity: "medium", area: "N. Thailand", time: "09:41 UTC" },
-    { id: "A-122", title: "C/N0 fade", severity: "low", area: "S. China Sea", time: "09:44 UTC" },
-  ];
-
-  const severityColor = (s: AlertItem["severity"]) => {
-    if (s === "high") return "bg-rose-500/90";
-    if (s === "medium") return "bg-amber-500/90";
-    return "bg-emerald-500/90";
-  };
-
-  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const nextScale = clamp(view.scale * (e.deltaY < 0 ? 1.1 : 0.9), 0.6, 6);
-    const dx = (px - view.x) / view.scale;
-    const dy = (py - view.y) / view.scale;
-    setView({ x: px - dx * nextScale, y: py - dy * nextScale, scale: nextScale });
-  };
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = {
-      active: true,
-      startX: e.clientX,
-      startY: e.clientY,
-      ox: view.x,
-      oy: view.y,
-    };
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current.active) return;
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
-    setView((v) => ({ ...v, x: dragRef.current.ox + dx, y: dragRef.current.oy + dy }));
-  };
-
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    dragRef.current.active = false;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-  };
-
-  return (
-    <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="font-semibold">Next (Phase 2)</div>
-          <div className="text-slate-600 mt-1">IPP map + AI segmentation overlay + alert report</div>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-600">Scroll to zoom</span>
-          <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-600">Drag to pan</span>
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4">
-        <div
-          ref={containerRef}
-          className="relative h-[420px] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
-          onWheel={onWheel}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          style={{ touchAction: "none" }}
-        >
-          <div
-            className="absolute inset-0"
-            style={{
-              transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-              transformOrigin: "0 0",
-            }}
-          >
-            <img src="/phase2-world-map.png" alt="World map outline" className="absolute inset-0 h-full w-full object-contain" draggable={false} />
-            <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="segA" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#f97316" stopOpacity="0.35" />
-                  <stop offset="100%" stopColor="#ef4444" stopOpacity="0.15" />
-                </linearGradient>
-              </defs>
-              <path d="M35,42 C40,36 52,36 58,42 C64,48 64,60 56,63 C48,66 40,60 35,55 Z" fill="url(#segA)" stroke="#f97316" strokeOpacity="0.35" strokeWidth="0.4" />
-            </svg>
-
-            {ippPoints.map((p) => {
-              const pos = projectLatLon(p.lat, p.lon);
-              const color = p.sys === "GPS" ? "#3b82f6" : p.sys === "GAL" ? "#22c55e" : p.sys === "BDS" ? "#06b6d4" : p.sys === "GLO" ? "#a855f7" : "#eab308";
-              return (
-                <div key={p.id} className="absolute" style={{ left: `${pos.x}%`, top: `${pos.y}%` }}>
-                  <div className="h-2.5 w-2.5 rounded-full border border-white shadow" style={{ backgroundColor: color, transform: "translate(-50%, -50%)" }} title={`${p.id} VTEC ${p.vtec.toFixed(1)}`} />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="border border-slate-200 rounded-xl p-4 bg-slate-50">
-          <div className="font-semibold text-slate-900">Alert report</div>
-          <div className="text-slate-500 text-sm mt-1">AI segmentation + thresholded events</div>
-          <div className="mt-4 space-y-3">
-            {alerts.map((a) => (
-              <div key={a.id} className="rounded-lg bg-white border border-slate-200 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="font-medium text-slate-900">{a.title}</div>
-                  <span className={`text-xs text-white px-2 py-0.5 rounded-full ${severityColor(a.severity)}`}>{a.severity.toUpperCase()}</span>
-                </div>
-                <div className="text-xs text-slate-500 mt-1">{a.area}</div>
-                <div className="text-xs text-slate-400 mt-1">{a.time}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
@@ -574,6 +448,35 @@ export default function Page() {
     lastHeartbeatAgoSec: null,
   });
   const [stationAlerts, setStationAlerts] = useState<StationAlertRow[]>([]);
+
+  const stationAlertsAll = useMemo<StationAlertRow[]>(() => {
+    const byStation = new Map<string, StationAlertRow>();
+    for (const row of stationAlerts) byStation.set(row.station, row);
+
+    const rows: StationAlertRow[] = stations.map((s) => {
+      return (
+        byStation.get(s.id) ?? {
+          station: s.id,
+          last_at: null,
+          rows: 0,
+          max_vtec: null,
+          max_roti: null,
+          max_s4c: null,
+          exceed: { vtec: false, roti: false, s4c: false, any: false },
+        }
+      );
+    });
+
+    for (const row of stationAlerts) {
+      if (!rows.some((r) => r.station === row.station)) rows.push(row);
+    }
+
+    rows.sort((a, b) => {
+      if (a.exceed.any !== b.exceed.any) return a.exceed.any ? -1 : 1;
+      return a.station.localeCompare(b.station);
+    });
+    return rows;
+  }, [stations, stationAlerts]);
 
   useEffect(() => {
     let alive = true;
@@ -900,7 +803,11 @@ export default function Page() {
   const s4cSeries = useMemo(() => buildMetricSeries("S4c", prns, series), [series, prns]);
 
   const emptyMetricSeries = useMemo(
-    () => [{ ts: new Date().toISOString(), time: toHHMMSS(new Date().toISOString()), median: null }],
+    () => {
+      const ts = new Date().toISOString();
+      const tod = utcSecondsOfDay(ts);
+      return [{ ts, time: toHHMMSS(ts), tod: Number.isFinite(tod) ? tod : 0, median: null }];
+    },
     []
   );
 
@@ -926,6 +833,7 @@ export default function Page() {
       return {
         ts,
         time: toHHMMSS(ts),
+        tod: Number.isFinite(utcSecondsOfDay(ts)) ? utcSecondsOfDay(ts) : 0,
         GNSS: set.size,
         GPS: bySys["GPS"] ?? 0,
         GAL: bySys["GAL"] ?? 0,
@@ -986,7 +894,7 @@ export default function Page() {
         </section>
 
         {isRealtime ? <RealtimeHealth stats={runtimeStats} /> : null}
-        {isRealtime ? <StationThresholdBoard rows={stationAlerts} /> : null}
+        {isRealtime ? <StationThresholdBoard rows={stationAlertsAll} /> : null}
 
         <div className="space-y-4">
           <Card title="GNSS TEC / VTEC (per-PRN + median)" subtitle="thin lines = per-PRN, thick line = median">
@@ -994,7 +902,7 @@ export default function Page() {
               <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
                 <LineChart data={vtecSeries.length ? vtecSeries : emptyMetricSeries}>
                   <CartesianGrid stroke="#e2e8f0" />
-                  <XAxis dataKey="time" type="category" allowDuplicatedCategory={false} />
+                  <XAxis dataKey="tod" type="number" domain={[DAY_START_SEC, DAY_END_SEC]} ticks={X_TICKS_SEC} tickFormatter={formatUtcTick} label={{ value: "UTC Time", position: "insideBottom", offset: -4 }} />
                   <YAxis domain={[0, 100]} allowDataOverflow label={{ value: "TEC (TECU)", angle: -90, position: "insideLeft" }} />
                   <Tooltip content={<CompactTooltip title="VTEC" />} />
                   <Legend />
@@ -1012,7 +920,7 @@ export default function Page() {
               <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
                 <LineChart data={stecSeries.length ? stecSeries : emptyMetricSeries}>
                   <CartesianGrid stroke="#e2e8f0" />
-                  <XAxis dataKey="time" type="category" allowDuplicatedCategory={false} />
+                  <XAxis dataKey="tod" type="number" domain={[DAY_START_SEC, DAY_END_SEC]} ticks={X_TICKS_SEC} tickFormatter={formatUtcTick} label={{ value: "UTC Time", position: "insideBottom", offset: -4 }} />
                   <YAxis domain={["auto", "auto"]} allowDataOverflow label={{ value: "STEC (TECU)", angle: -90, position: "insideLeft" }} />
                   <Tooltip content={<CompactTooltip title="STEC" />} />
                   <Legend />
@@ -1030,7 +938,7 @@ export default function Page() {
               <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
                 <LineChart data={rotiSeries.length ? rotiSeries : emptyMetricSeries}>
                   <CartesianGrid stroke="#e2e8f0" />
-                  <XAxis dataKey="time" type="category" allowDuplicatedCategory={false} />
+                  <XAxis dataKey="tod" type="number" domain={[DAY_START_SEC, DAY_END_SEC]} ticks={X_TICKS_SEC} tickFormatter={formatUtcTick} label={{ value: "UTC Time", position: "insideBottom", offset: -4 }} />
                   <YAxis domain={[0, 1]} allowDataOverflow label={{ value: "ROTI (TECU/min)", angle: -90, position: "insideLeft" }} />
                   <Tooltip content={<CompactTooltip title="ROTI" />} />
                   <Legend />
@@ -1048,7 +956,7 @@ export default function Page() {
               <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
                 <LineChart data={s4cSeries.length ? s4cSeries : emptyMetricSeries}>
                   <CartesianGrid stroke="#e2e8f0" />
-                  <XAxis dataKey="time" type="category" allowDuplicatedCategory={false} />
+                  <XAxis dataKey="tod" type="number" domain={[DAY_START_SEC, DAY_END_SEC]} ticks={X_TICKS_SEC} tickFormatter={formatUtcTick} label={{ value: "UTC Time", position: "insideBottom", offset: -4 }} />
                   <YAxis domain={[0, 1]} allowDataOverflow />
                   <Tooltip content={<CompactTooltip title="S4c" />} />
                   <Legend />
@@ -1066,9 +974,9 @@ export default function Page() {
               <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
                 <LineChart data={satCount}>
                   <CartesianGrid stroke="#e2e8f0" />
-                  <XAxis dataKey="time" />
+                  <XAxis dataKey="tod" type="number" domain={[DAY_START_SEC, DAY_END_SEC]} ticks={X_TICKS_SEC} tickFormatter={formatUtcTick} label={{ value: "UTC Time", position: "insideBottom", offset: -4 }} />
                   <YAxis domain={[0, 40]} allowDataOverflow label={{ value: "Satellites", angle: -90, position: "insideLeft" }} />
-                  <Tooltip />
+                  <Tooltip labelFormatter={(v) => (typeof v === "number" ? formatUtcLabel(v) : String(v ?? ""))} />
                   <Legend />
                   <Line type="stepAfter" dataKey="GPS" name="GPS" dot={false} stroke="#3b82f6" strokeWidth={1.5} isAnimationActive={false} />
                   <Line type="stepAfter" dataKey="GAL" name="GAL" dot={false} stroke="#22c55e" strokeWidth={1.5} isAnimationActive={false} />
@@ -1082,7 +990,7 @@ export default function Page() {
           </Card>
         </div>
 
-        <Phase2Map />
+        <Phase2Cesium station={station} selectedDate={selectedDate} isRealtime={isRealtime} />
       </div>
     </div>
   );
