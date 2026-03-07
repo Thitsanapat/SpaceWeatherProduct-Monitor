@@ -14,6 +14,19 @@
       "problemMatcher": []
     },
     {
+      "label": "Run Full System (All Stations)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\run_all.ps1",
+        "-RunAllStations"
+      ],
+      "problemMatcher": []
+    },
+    {
       "label": "Stop Full System",
       "type": "shell",
       "command": "powershell",
