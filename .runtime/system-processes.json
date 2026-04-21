@@ -1,133 +1,37 @@
 ﻿{
-    "started_at_utc":  "2026-03-07T04:11:11.1805257Z",
+    "started_at_utc":  "2026-04-21T07:19:35.4425992Z",
     "station":  "KMIT6",
-    "backend_port":  8010,
+    "backend_port":  8000,
     "frontend_port":  3000,
-    "monitor_out":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend\\monitor_logs\\soak_metrics_KMIT6_20260307_111101.csv",
+    "monitor_out":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend\\monitor_logs\\soak_metrics_KMIT6_20260421_141930.csv",
     "processes":  {
                       "backend":  {
-                                      "pid":  24748,
+                                      "pid":  12596,
                                       "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                      "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8010"
+                                      "command":  "C:\\Users\\thits\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe -m uvicorn main:app --host 0.0.0.0 --port 8000"
                                   },
                       "frontend":  {
-                                       "pid":  7724,
+                                       "pid":  8784,
                                        "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\frontend",
-                                       "command":  "NEXT_PUBLIC_BACKEND_URL=http://localhost:8010 ; C:\\Program Files\\nodejs\\npm.cmd run dev -- --port 3000"
+                                       "command":  "NEXT_PUBLIC_BACKEND_URL=http://localhost:8000 ; C:\\Program Files\\nodejs\\npm.cmd run dev -- --port 3000"
                                    },
                       "worker":  {
-                                     "pid":  20380,
+                                     "pid":  14352,
                                      "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                     "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py KMIT6"
+                                     "command":  "C:\\Users\\thits\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe worker_ntrip_publish.py KMIT6"
                                  },
                       "workers":  [
                                       {
                                           "station":  "KMIT6",
-                                          "pid":  20380,
+                                          "pid":  14352,
                                           "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py KMIT6"
-                                      },
-                                      {
-                                          "station":  "KMIG",
-                                          "pid":  15576,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py KMIG"
-                                      },
-                                      {
-                                          "station":  "CHMA",
-                                          "pid":  18512,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py CHMA"
-                                      },
-                                      {
-                                          "station":  "CPN1",
-                                          "pid":  3856,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py CPN1"
-                                      },
-                                      {
-                                          "station":  "STFD",
-                                          "pid":  23620,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py STFD"
-                                      },
-                                      {
-                                          "station":  "CADT",
-                                          "pid":  17832,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py CADT"
-                                      },
-                                      {
-                                          "station":  "ITC0",
-                                          "pid":  14096,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py ITC0"
-                                      },
-                                      {
-                                          "station":  "CM01",
-                                          "pid":  18608,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py CM01"
-                                      },
-                                      {
-                                          "station":  "KKU0",
-                                          "pid":  4576,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py KKU0"
-                                      },
-                                      {
-                                          "station":  "CHAN",
-                                          "pid":  23268,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py CHAN"
-                                      },
-                                      {
-                                          "station":  "CNBR",
-                                          "pid":  22928,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py CNBR"
-                                      },
-                                      {
-                                          "station":  "DPT9",
-                                          "pid":  12912,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py DPT9"
-                                      },
-                                      {
-                                          "station":  "LPBR",
-                                          "pid":  19272,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py LPBR"
-                                      },
-                                      {
-                                          "station":  "NKNY",
-                                          "pid":  11292,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py NKNY"
-                                      },
-                                      {
-                                          "station":  "NKRM",
-                                          "pid":  16060,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py NKRM"
-                                      },
-                                      {
-                                          "station":  "NKSW",
-                                          "pid":  23464,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py NKSW"
-                                      },
-                                      {
-                                          "station":  "PJRK",
-                                          "pid":  12168,
-                                          "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                          "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe worker_ntrip_publish.py PJRK"
+                                          "command":  "C:\\Users\\thits\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe worker_ntrip_publish.py KMIT6"
                                       }
                                   ],
                       "monitor":  {
-                                      "pid":  19532,
+                                      "pid":  16172,
                                       "cwd":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend",
-                                      "command":  "C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\.venv\\Scripts\\python.exe scripts/soak_test_runtime_metrics.py --backend http://localhost:8010 --station KMIT6 --interval-sec 2 --duration-hr 24 --out C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend\\monitor_logs\\soak_metrics_KMIT6_20260307_111101.csv"
+                                      "command":  "C:\\Users\\thits\\AppData\\Local\\Programs\\Python\\Launcher\\py.exe scripts/soak_test_runtime_metrics.py --backend http://localhost:8000 --station KMIT6 --interval-sec 2 --duration-hr 24 --out C:\\Users\\thits\\Documents\\SpaceWeatherProduct-Monitor\\backend\\monitor_logs\\soak_metrics_KMIT6_20260421_141930.csv"
                                   }
                   }
 }
