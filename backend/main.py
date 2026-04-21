@@ -66,6 +66,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Test if WebSocket decorator works at all
+@app.websocket("/ws/test")
+async def ws_test(ws: WebSocket):
+    await ws.accept()
+    await ws.send_text("test")
+
 # in-memory worker config (per station)
 WORKER_CONFIG: Dict[str, Dict] = {}
 
