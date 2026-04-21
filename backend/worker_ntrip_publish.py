@@ -624,6 +624,7 @@ def _epoch_ms_to_unix_sec(epoch_ms: Optional[float]) -> Optional[int]:
 
 
 def _flush_bucket(bucket: Bucket):
+    stats = {"GPS": 0, "GAL": 0, "BDS": 0, "QZS": 0, "GLO": 0, "skipped": 0}
     for prn_id, obs in bucket.prns.items():
         sigs = _bands_dict(obs)
         if not sigs:
@@ -675,12 +676,17 @@ def _flush_bucket(bucket: Bucket):
         if stec_for_vtec is not None:
             el = elev_deg_any(obs.gnss, prn_id, float(bucket.t_sec))
             if el is not None and el < ELEV_CUT:
+                stats["skipped"] += 1
                 continue
             if el is not None:
                 m = slant_factor(el)
                 vtec = _clamp_range(float(stec_for_vtec / m), VTEC_MIN, VTEC_MAX)
+            # BDS fallback: allow output even without ephemeris (el=None) if we have STEC/ROTI
+            elif obs.gnss.upper() == "BEIDOU" and (stec_out is not None or np.isfinite(roti)):
+                pass  # allow BDS to proceed without elevation/VTEC
 
         if stec_out is None and vtec is None and not np.isfinite(s4) and not np.isfinite(roti):
+            stats["skipped"] += 1
             continue
 
         ts = _bucket_ts_iso(bucket.t_sec)
@@ -692,6 +698,15 @@ def _flush_bucket(bucket: Bucket):
             "VTEC": float(vtec) if vtec is not None and np.isfinite(vtec) else None,
             "STEC": float(stec_out) if stec_out is not None and np.isfinite(stec_out) else None,
         })
+        
+        # Track which systems produced output
+        sys_short = {"GPS": "GPS", "GLONASS": "GLO", "GALILEO": "GAL", "BEIDOU": "BDS", "QZSS": "QZS"}.get(obs.gnss.upper(), "?")
+        if sys_short in stats:
+            stats[sys_short] += 1
+    
+    # Debug: log bucket stats if we have BDS data but it was skipped
+    if stats["BDS"] > 0 or (stats["skipped"] > 0 and bucket.prns and any(obs.gnss.upper() == "BEIDOU" for obs in bucket.prns.values())):
+        pass  # Just track; can add per-minute logging if needed
 
 
 def _get_bucket(t_sec: int) -> Optional[Bucket]:
