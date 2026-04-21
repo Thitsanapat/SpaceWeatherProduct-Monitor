@@ -507,57 +507,87 @@ export default function Phase2Cesium({ station, selectedDate, isRealtime }: Phas
     const Cesium = window.Cesium;
     if (!viewer || !Cesium) return;
 
-    viewer.entities.removeAll();
+    try {
+      viewer.entities.removeAll();
 
-    for (const e of events) {
-      const color = Cesium.Color.fromCssColorString(rotiColor01(e.roti));
-      viewer.entities.add({
-        id: e.id,
-        position: Cesium.Cartesian3.fromDegrees(e.lon, e.lat, 250000),
-        point: {
-          pixelSize: 7,
-          color,
-          outlineColor: Cesium.Color.WHITE,
-          outlineWidth: 1,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        },
-      });
-    }
-
-    for (const seg of segments) {
-      const polyCoords: number[] = [];
-      for (const p of seg.polygon) {
-        polyCoords.push(p.lon, p.lat);
+      for (const e of events) {
+        try {
+          const color = Cesium.Color.fromCssColorString(rotiColor01(e.roti));
+          viewer.entities.add({
+            id: e.id,
+            position: Cesium.Cartesian3.fromDegrees(e.lon, e.lat, 250000),
+            point: {
+              pixelSize: 7,
+              color,
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 1,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            },
+          });
+        } catch (err) {
+          console.warn("Failed to add event marker:", e.id, err);
+        }
       }
-      const fill = Cesium.Color.fromCssColorString(sevColor(seg.severity)).withAlpha(0.22);
 
-      viewer.entities.add({
-        id: seg.id,
-        polygon: {
-          hierarchy: Cesium.Cartesian3.fromDegreesArray(polyCoords),
-          material: fill,
-          outline: true,
-          outlineColor: Cesium.Color.fromCssColorString(sevColor(seg.severity)),
-        },
-      });
+      for (const seg of segments) {
+        try {
+          // Limit polygon complexity - Cesium has issues with too many vertices
+          let polyPts = seg.polygon;
+          if (polyPts && polyPts.length > 50) {
+            // Simplify by taking every nth point
+            const step = Math.ceil(polyPts.length / 50);
+            polyPts = polyPts.filter((_, i) => i % step === 0);
+          }
+          
+          const polyCoords: number[] = [];
+          for (const p of polyPts) {
+            polyCoords.push(p.lon, p.lat);
+          }
+          
+          // Need at least 3 points to make a valid polygon
+          if (polyCoords.length < 6) {
+            continue;
+          }
+          
+          const fill = Cesium.Color.fromCssColorString(sevColor(seg.severity)).withAlpha(0.22);
+
+          viewer.entities.add({
+            id: seg.id,
+            polygon: {
+              hierarchy: Cesium.Cartesian3.fromDegreesArray(polyCoords),
+              material: fill,
+              outline: true,
+              outlineColor: Cesium.Color.fromCssColorString(sevColor(seg.severity)),
+            },
+          });
+        } catch (err) {
+          console.warn("Failed to add segment polygon:", seg.id, err);
+        }
+      }
+    } catch (err) {
+      console.error("Error rendering Cesium entities:", err);
     }
 
     if (userLat !== null && userLon !== null) {
-      viewer.entities.add({
-        id: "user-marker",
-        position: Cesium.Cartesian3.fromDegrees(userLon, userLat, 0),
-        point: {
-          pixelSize: 11,
-          color: Cesium.Color.WHITE,
-          outlineColor: Cesium.Color.fromCssColorString("#0ea5e9"),
-          outlineWidth: 3,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        },
-      });
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(userLon, userLat, 1750000),
-        duration: 0.9,
-      });
+      try {
+        viewer.entities.add({
+          id: "user-marker",
+          position: Cesium.Cartesian3.fromDegrees(userLon, userLat, 0),
+          point: {
+            pixelSize: 11,
+            color: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.fromCssColorString("#0ea5e9"),
+            outlineWidth: 3,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          },
+        });
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(userLon, userLat, 1750000),
+          duration: 0.9,
+        });
+      } catch (err) {
+        console.warn("Failed to render user marker or camera movement:", err);
+      }
     }
   }, [events, segments, userLat, userLon]);
 
