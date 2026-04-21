@@ -11,7 +11,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import Phase2Cesium from "./components/Phase2Cesium";
+// import Phase2Cesium from "./components/Phase2Cesium"; // Disabled: Cesium rendering causes crashes
+// TODO: Re-enable when Cesium vertex/entity pooling optimized
 
 type Station = { id: string; name: string; lat?: number; lon?: number; alt?: number };
 
@@ -70,24 +71,16 @@ type RuntimeStats = {
   lastHeartbeatAgoSec: number | null;
 };
 
-type StationAlertRow = {
-  station: string;
-  last_at: string | null;
-  rows: number;
-  max_vtec: number | null;
-  max_roti: number | null;
-  max_s4c: number | null;
-  exceed: { vtec: boolean; roti: boolean; s4c: boolean; any: boolean };
-};
+
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000")
   .trim()
   .replace(/\s+/g, "")
   .replace(/\/+$/, "");
 const BACKEND_WS = BACKEND.replace(/^https?/i, (m) => (m.toLowerCase() === "https" ? "wss" : "ws"));
-const REALTIME_WINDOW_MS = 1 * 60 * 60 * 1000;
-const MAX_POINTS_PER_PRN = 6000;
-const MAX_COUNT_POINTS = 6000;
+const REALTIME_WINDOW_MS = 30 * 60 * 1000; // 30 min window (reduced from 1hr for memory)
+const MAX_POINTS_PER_PRN = 3000; // Reduced from 6000 for chart stability
+const MAX_COUNT_POINTS = 3000;   // Reduced from 6000 for chart stability
 const WS_FLUSH_INTERVAL_MS = 250;
 const WS_RECONNECT_MS = 1500;
 const WS_HEARTBEAT_TIMEOUT_MS = 15000;
@@ -355,61 +348,6 @@ function RealtimeHealth({ stats }: { stats: RuntimeStats }) {
   );
 }
 
-function StationThresholdBoard({ rows }: { rows: StationAlertRow[] }) {
-  const exceeded = rows.filter((r) => r.exceed.any);
-  return (
-    <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="text-lg font-semibold">Stations Exceeding Threshold</div>
-        <span className="text-xs rounded-full px-2 py-1 bg-slate-100 text-slate-600">
-          {exceeded.length} exceeded
-        </span>
-      </div>
-
-      {!rows.length ? (
-        <div className="text-sm text-slate-500">No realtime station alerts yet.</div>
-      ) : (
-        <div className="overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-200">
-                <th className="py-2 pr-4">Station</th>
-                <th className="py-2 pr-4">VTEC max</th>
-                <th className="py-2 pr-4">ROTI max</th>
-                <th className="py-2 pr-4">S4c max</th>
-                <th className="py-2 pr-4">Last update</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.station} className="border-b border-slate-100">
-                  <td className="py-2 pr-4 font-medium text-slate-900">{r.station}</td>
-                  <td className="py-2 pr-4">
-                    <span className={r.exceed.vtec ? "text-rose-600 font-semibold" : "text-slate-700"}>
-                      {r.max_vtec === null ? "-" : r.max_vtec.toFixed(2)}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span className={r.exceed.roti ? "text-rose-600 font-semibold" : "text-slate-700"}>
-                      {r.max_roti === null ? "-" : r.max_roti.toFixed(3)}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span className={r.exceed.s4c ? "text-rose-600 font-semibold" : "text-slate-700"}>
-                      {r.max_s4c === null ? "-" : r.max_s4c.toFixed(3)}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4 text-slate-500">{r.last_at ? toHHMMSS(r.last_at) : "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
 export default function Page() {
   const [stations, setStations] = useState<Station[]>([]);
   const [station, setStation] = useState("KMIT6");
@@ -447,36 +385,6 @@ export default function Page() {
     heapMb: null,
     lastHeartbeatAgoSec: null,
   });
-  const [stationAlerts, setStationAlerts] = useState<StationAlertRow[]>([]);
-
-  const stationAlertsAll = useMemo<StationAlertRow[]>(() => {
-    const byStation = new Map<string, StationAlertRow>();
-    for (const row of stationAlerts) byStation.set(row.station, row);
-
-    const rows: StationAlertRow[] = stations.map((s) => {
-      return (
-        byStation.get(s.id) ?? {
-          station: s.id,
-          last_at: null,
-          rows: 0,
-          max_vtec: null,
-          max_roti: null,
-          max_s4c: null,
-          exceed: { vtec: false, roti: false, s4c: false, any: false },
-        }
-      );
-    });
-
-    for (const row of stationAlerts) {
-      if (!rows.some((r) => r.station === row.station)) rows.push(row);
-    }
-
-    rows.sort((a, b) => {
-      if (a.exceed.any !== b.exceed.any) return a.exceed.any ? -1 : 1;
-      return a.station.localeCompare(b.station);
-    });
-    return rows;
-  }, [stations, stationAlerts]);
 
   useEffect(() => {
     let alive = true;
@@ -684,26 +592,6 @@ export default function Page() {
 
   useEffect(() => {
     if (!isRealtime) return;
-    let alive = true;
-    const poll = () => {
-      fetch(`${BACKEND}/api/station_alerts?vtec_thr=80&roti_thr=0.4&s4c_thr=0.25`)
-        .then((r) => r.json())
-        .then((j) => {
-          if (!alive) return;
-          setStationAlerts(Array.isArray(j?.rows) ? j.rows : []);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [isRealtime]);
-
-  useEffect(() => {
-    if (!isRealtime) return;
 
     let rafId = 0;
     let frameCount = 0;
@@ -894,7 +782,6 @@ export default function Page() {
         </section>
 
         {isRealtime ? <RealtimeHealth stats={runtimeStats} /> : null}
-        {isRealtime ? <StationThresholdBoard rows={stationAlertsAll} /> : null}
 
         <div className="space-y-4">
           <Card title="GNSS TEC / VTEC (per-PRN + median)" subtitle="thin lines = per-PRN, thick line = median">
@@ -990,7 +877,19 @@ export default function Page() {
           </Card>
         </div>
 
-        <Phase2Cesium station={station} selectedDate={selectedDate} isRealtime={isRealtime} />
+        {/* Phase 2: Cesium globe - Disabled for stability, will be re-enabled after optimization */}
+        <div style={{ 
+          padding: "40px 20px", 
+          textAlign: "center", 
+          color: "#888", 
+          fontSize: "13px",
+          background: "#f5f5f5",
+          borderRadius: "8px",
+          margin: "20px 0"
+        }}>
+          <p style={{ margin: 0, fontWeight: "500" }}>Phase 2: Cesium 3D Globe</p>
+          <p style={{ margin: "8px 0 0 0", fontSize: "12px" }}>Ionospheric Pierce Point visualization - Coming soon (under optimization)</p>
+        </div>
       </div>
     </div>
   );
